@@ -4,22 +4,24 @@ import pytz
 from tzlocal import get_localzone
 from datetime import datetime, timedelta
 
-
 # how to use
 # initialize AEMTApi object with apikey and timezone (optional)
 class AEMETApi:
-
     def __init__(self, apikey, timezone=None):
+        # basic api and url parameters
         self.api_key = apikey
+        self.params = {"api_key": self.api_key}
         self.base_url = "https://opendata.aemet.es/opendata"
+
+        # supported options for station id and time aggregation
         self.stations = {
             "89064": "Juan Carlos I Meteorological Station",
             "89070": "Gabriel de Castilla Meteorological Station}"
         }
-        self.params = {"api_key": self.api_key}
         self.time_aggregation_options = [None, "Hourly", "Daily", "Monthly"]
-        self.local_timezone = pytz.timezone(
-            timezone) if timezone else get_localzone()
+
+        # used to save dataset in local timezone if not provided it will try to use local timezone
+        self.local_timezone = pytz.timezone(timezone) if timezone else get_localzone()
 
     def __get_data(self, endpoint):
         response = requests.get(self.base_url + endpoint, params=self.params)
@@ -64,8 +66,14 @@ class AEMETApi:
             "description": response["descripcion"],
             "dataset": []
         }
+    
+    # sorts data by time either on the raw data or on a processed/aggregated data
+    def sort_data(self, data):
+        return sorted(data, key=lambda x: x['fhora'] if 'fhora' in x else x['utc_datetime'])
 
     # assumes data is ordered by time
+    # the algorithm is quite simple and not very efficient mainly useful for smaller sets of data
+    # a better implementation would be done using pandas for very large datasets
     def aggregate_data(self, data_url, time_aggregation):
         # used to test the aggregated data from a file
         # data = json.load(open("test_data.json", "r"))
@@ -75,6 +83,9 @@ class AEMETApi:
         if len(data) == 0:
             return aggregated_data
 
+        # sort data by time
+        data = self.sort_data(data)
+
         aggregated_item = {}
         for item in data:
             time = datetime.strptime(item["fhora"], "%Y-%m-%dT%H:%M:%S")
@@ -83,27 +94,18 @@ class AEMETApi:
                 last_time = aggregated_data[-1]["utc_datetime"]
                 aggregate = time_aggregation == "Hourly" and last_time.hour == time.hour or time_aggregation == "Daily" and last_time.day == time.day or time_aggregation == "Monthly" and last_time.month == time.month
                 if aggregate:
-                    aggregated_item["temperature"] = (
-                        aggregated_item["temperature"] + item["temp"]) / 2
-                    aggregated_item["pressure"] = (
-                        aggregated_item["pressure"] + item["pres"]) / 2
-                    aggregated_item["speed"] = (
-                        aggregated_item["speed"] + item["vel"]) / 2
+                    aggregated_item["temperature"] = (aggregated_item["temperature"] + item["temp"]) / 2
+                    aggregated_item["pressure"] = (aggregated_item["pressure"] + item["pres"]) / 2
+                    aggregated_item["speed"] = (aggregated_item["speed"] + item["vel"]) / 2
                     continue
 
             aggregated_item = {
-                "station":
-                item["nombre"],
-                "utc_datetime":
-                time,
-                "datetime":
-                time.replace(tzinfo=pytz.utc).astimezone(self.local_timezone),
-                "temperature":
-                item["temp"],
-                "pressure":
-                item["pres"],
-                "speed":
-                item["vel"]
+                "station": item["nombre"],
+                "utc_datetime": time,
+                "datetime": time.replace(tzinfo=pytz.utc).astimezone(self.local_timezone),
+                "temperature": item["temp"],
+                "pressure": item["pres"],
+                "speed": item["vel"]
             }
             aggregated_data.append(aggregated_item)
 
@@ -127,7 +129,7 @@ if __name__ == "__main__":
     api = AEMETApi(apikey, "Europe/Madrid")
 
     aggregated_obj = api.get_antarctica_data(
-        "2022-08-01T00:00:00UTC", "2022-08-04T00:00:00UTC", "89064", "Daily")
+        "2022-07-01T00:00:00UTC", "2022-08-04T00:00:00UTC", "89064", "Monthly")
 
     if aggregated_obj["status"] == 200:
         api.print_aggregated_data(aggregated_obj["dataset"])
